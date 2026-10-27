@@ -61,7 +61,8 @@ function Invoke-TransportSearch {
         [ValidateSet('Båda','Till verksamheten','Från verksamheten')][string]$Direction = 'Båda',
         [Parameter(Mandatory)][datetime]$StartUtc,
         [Parameter(Mandatory)][datetime]$EndUtc,
-        [scriptblock]$Query = { param($Parameters) Get-MessageTraceV2 @Parameters -ErrorAction Stop },
+        [Parameter(Mandatory)][scriptblock]$Query,
+        [switch]$CompleteQuery,
         [scriptblock]$Progress = { param($Message) },
         [int]$MaximumRows = 50000
     )
@@ -116,7 +117,7 @@ function Invoke-TransportSearch {
                         Start-Sleep -Seconds (5 * ($attempt + 1))
                     }
                 }
-                if ($batch.Count -ge 5000) {
+                if ($batch.Count -ge 5000 -and -not $CompleteQuery) {
                     # Inclusive overlapping windows avoid skipping boundary records; keys remove duplicates.
                     if (($window.End - $window.Start).TotalSeconds -le 1) {
                         throw 'För många träffar vid samma tidpunkt. Begränsa med en verksamhetsadress. Resultatet exporteras inte som fullständigt.'

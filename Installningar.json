@@ -1,4 +1,7 @@
 {
-  "VerksamhetensDomaner": ["organisation.se"],
+  "TenantId": "",
+  "ClientId": "",
+  "ApiAppId": "",
+  "ApiBasUrl": "",
   "Exportmapp": "C:/temp"
 }

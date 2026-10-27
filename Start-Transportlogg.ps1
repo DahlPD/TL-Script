@@ -4,17 +4,18 @@ param([switch]$Demo)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Transportlogg.Core.ps1')
+. (Join-Path $PSScriptRoot 'Transportlogg.Client.ps1')
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
 
 $script:connected = $false
-$script:connectedHere = $false
+$script:authentication = $null
 $script:account = ''
 $script:results = @()
 $script:metadata = $null
 $settings = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Installningar.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-$script:domains = @($settings.VerksamhetensDomaner | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+$script:domains = @()
 if ($Demo) { $script:domains = @('kommun.example') }
 
 $form = [Windows.Forms.Form]::new()
@@ -45,8 +46,9 @@ $heading = Add-Label 'Sök och exportera e-postens transportstatus' 20 15 900
 $heading.Font = [Drawing.Font]::new('Segoe UI',16,[Drawing.FontStyle]::Bold)
 $heading.Height = 38
 $null = Add-Label '1. Logga in   →   2. Sök   →   3. Markera träffar   →   4. Exportera och granska' 20 58 1050
-$null = Add-Label 'Arbetskonto för inloggning' 20 98
+$null = Add-Label 'Inloggning via verksamhetens applikation' 20 98 500
 $login = Add-TextBox 20 126 340
+$login.ReadOnly = $true; $login.Text = 'Microsoft Entra ID – arbetskonto'
 $connect = [Windows.Forms.Button]::new()
 $connect.Text = 'Logga in'; $connect.Location = [Drawing.Point]::new(380,123); $connect.Size = [Drawing.Size]::new(150,34)
 $form.Controls.Add($connect)
@@ -118,22 +120,20 @@ function Set-Busy([bool]$Busy) {
 
 $connect.Add_Click({
     try {
-        Assert-TraceAddress $login.Text.Trim()
-        if ($script:domains.Count -eq 0) { throw 'IT måste fylla i VerksamhetensDomaner i Installningar.json före användning.' }
-        foreach ($domain in $script:domains) { Assert-TraceAddress "kontroll@$domain" }
+        $script:connected = $false; $script:authentication = $null
+        $script:results = @(); $script:metadata = $null; $grid.DataSource = $null
+        Assert-TransportClientSettings $settings
         Set-Busy $true
         $status.Text = 'Öppnar Microsofts inloggning ...'; $form.Refresh()
-        $module = Get-Module -ListAvailable ExchangeOnlineManagement | Where-Object Version -ge ([version]'3.7.0') | Sort-Object Version -Descending | Select-Object -First 1
-        if (-not $module) { throw 'ExchangeOnlineManagement 3.7.0 eller senare saknas. Be IT installera modulen enligt README.md.' }
-        Import-Module $module.Path -ErrorAction Stop
-        Connect-ExchangeOnline -UserPrincipalName $login.Text.Trim() -ShowBanner:$false -CommandName Get-MessageTraceV2 -ErrorAction Stop
-        $script:connectedHere = $true
-        if (-not (Get-Command Get-MessageTraceV2 -ErrorAction SilentlyContinue)) { throw 'Kontot saknar tillgång till meddelandespårning. Kontakta IT.' }
-        $script:connected = $true; $script:account = $login.Text.Trim()
+        $script:authentication = Show-TransportSignIn -Settings $settings -Owner $form
+        $session = Invoke-TransportApi -Settings $settings -Authentication $script:authentication -Body @{ action = 'session' }
+        $script:domains = @($session.allowedDomains)
+        $script:connected = $true; $script:account = [string]$session.userName
         $connectionLabel.Text = "Inloggad: $script:account"
         $status.Text = 'Ange e-postadress och tidsperiod. Tryck sedan på Sök.'
     } catch {
         $script:connected = $false
+        $script:authentication = $null
         $connectionLabel.Text = 'Inte inloggad'
         $status.Text = 'Inloggningen kunde inte slutföras.'
         Show-Problem $_.Exception.Message
@@ -169,14 +169,19 @@ $search.Add_Click({
                 }
             })
         } else {
-            $script:results = @(Invoke-TransportSearch -Address $address.Text.Trim() -OrganizationAddress $orgAddress.Text.Trim() -AllowedDomains $script:domains -Direction $direction.Text -StartUtc $fromUtc -EndUtc $toUtc -Progress {
-                param($Message) $status.Text = $Message; $status.Refresh()
-            })
+            $status.Text = 'Söker via verksamhetens tjänst och Microsoft Graph ...'; $status.Refresh()
+            $response = Invoke-TransportApi -Settings $settings -Authentication $script:authentication -Body @{
+                action = 'search'; address = $address.Text.Trim(); organizationAddress = $orgAddress.Text.Trim()
+                direction = $direction.Text; startUtc = $fromUtc.ToString('o'); endUtc = $toUtc.ToString('o')
+                includeSubject = [bool]$includeSubject.Checked
+            }
+            $script:results = @($response.rows)
         }
         $script:metadata = [ordered]@{
             Adress = $address.Text.Trim(); Verksamhetsadress = $orgAddress.Text.Trim()
             Riktning = $direction.Text; FranUTC = $fromUtc.ToString('o'); TillUTC = $toUtc.ToString('o')
             Tidszon = 'Europe/Stockholm'; Domaner = $script:domains
+            TjanstReferens = $(if ($Demo) { 'DEMO' } else { [string]$response.requestId })
             AntalSoktraffar = $script:results.Count; SokningAvslutadUTC = [datetime]::UtcNow.ToString('o')
             KontouppgiftVidInloggning = $script:account; Demo = [bool]$Demo
         }
@@ -204,6 +209,7 @@ $includeSubject.Add_CheckedChanged({
         $column.Name = 'Amne'; $column.DataPropertyName = 'Amne'; $column.HeaderText = 'Ämne'
         [void]$grid.Columns.Add($column)
     } elseif ($grid.Columns.Contains('Amne')) { $grid.Columns.Remove('Amne') }
+    if ($null -ne $script:metadata) { & $invalidate }
 })
 
 # Editing search criteria invalidates the old result to keep exports tied to the visible search.
@@ -249,5 +255,5 @@ if ($Demo) {
 try { [void]$form.ShowDialog() }
 finally {
     $form.Dispose()
-    if ($script:connectedHere) { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue }
+    $script:authentication = $null
 }

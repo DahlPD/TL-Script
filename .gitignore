@@ -1,2 +1,5 @@
 Transportlogg_*/
 *.log
+dist/
+.deployment/
+local.settings.json

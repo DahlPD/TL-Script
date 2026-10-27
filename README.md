@@ -1,91 +1,74 @@
 # Transportlogg för Exchange Online
 
-Ett Windowsverktyg med svenskt fönster för handläggare som behöver söka efter e-post mellan en angiven adress och verksamheten, välja relevanta träffar och skapa ett underlag för utlämning. Verktyget skickar inga mejl och läser inte mejltexter eller bilagor.
+Ett svenskt Windowsverktyg för handläggare som behöver hitta e-postens transportstatus och exportera valda träffar för granskning och utlämning.
 
-## Prova direkt
+**Ingen extra installation behövs hos handläggaren.** Klienten använder inbyggd Windows PowerShell 5.1, .NET och webbläsare. Användaren loggar in via Entra ID och tilldelas åtkomst via verksamhetens Enterprise Application. En Azure Function anropar Microsoft Graph med sin managed identity. Handläggaren behöver inga egna Exchange-administratörsroller.
 
-Dubbelklicka på **Starta-demo.cmd**. Ingen Exchangeanslutning eller modul behövs. Tryck på **Sök**, markera rader och välj **Exportera valda träffar**. Demorapporten, CSV-filen och det interna underlaget märks som fiktiva. Stäng fönstret för att avsluta.
+Koden och distributionsskripten är förberedda. IT behöver konfigurera Entra och Azure enligt [installationsguiden](azure/README.md). Ingen faktisk tenantanslutning eller Azure-distribution har utförts under utvecklingen.
 
-Om organisationens policy blockerar PowerShellskript behöver IT distribuera/signera dem enligt ordinarie rutin. Startfilerna ändrar inte körningspolicy.
+## Prova utan Microsoft 365-anslutning
 
-## Förberedelser för IT
+Dubbelklicka på **Starta-demo.cmd**, tryck på **Sök**, markera rader och välj **Exportera valda träffar**. Inga konfigurerade app-ID:n behövs i demoläget. Exporterna märks som fiktiva.
 
-1. Använd en Windowsdator med Windows PowerShell 5.1 och interaktiv inloggning. Startfilerna väljer denna miljö och STA-läge.
-2. Installera en aktuell, av IT godkänd version av ExchangeOnlineManagement, minst 3.7.0, för handläggarens körmiljö. Exempel, i Windows PowerShell:
+Organisationens policy måste tillåta skriptkörning. IT kan distribuera och signera skripten enligt ordinarie rutin. Startfilerna ändrar inte körningspolicy och installerar inga moduler. Windows och Windows PowerShell 5.1 krävs.
 
-   ```powershell
-   Install-Module ExchangeOnlineManagement -Scope CurrentUser -MinimumVersion 3.7.0
-   ```
+## Installation för IT
 
-3. Redigera **Installningar.json**. Ange samtliga verksamhetsdomäner som sökningar ska omfatta. Matchningen är exakt; underdomäner behöver egna poster. Exempel:
+Se [Azure-installation](azure/README.md) och [arkitektur](GRAPH-ARKITEKTUR.md). Inställningsfilen innehåller endast offentliga identifierare, tjänstens basadress och valfri exportmapp:
 
-   ```json
-   {
-     "VerksamhetensDomaner": ["kommun.se", "bolag.kommun.se"],
-     "Exportmapp": "C:\\GodkandLagring\\Transportloggar"
-   }
-   ```
+```json
+{
+  "TenantId": "TENANTENS-GUID",
+  "ClientId": "KLIENTAPPLIKATIONENS-GUID",
+  "ApiAppId": "API-APPLIKATIONENS-GUID",
+  "ApiBasUrl": "https://er-transportlogg.azurewebsites.net",
+  "Exportmapp": "C:/GodkandLagring/Transportloggar"
+}
+```
 
-   Tom exportmapp innebär att handläggaren själv väljer lagringsplats. Inställningen är en föreslagen plats, ingen spärr. Den tomma domänlistan som levereras blockerar skarp inloggning tills IT har konfigurerat den.
+Distributionsskriptet genererar en komplett inställningsfil i `.deployment/` utan att skriva över den lokala filen. Lägg inga klienthemligheter, certifikat eller funktionsnycklar i klienten. Tillåtna verksamhetsdomäner bestäms på servern.
 
-   I JSON behöver bakstreck dubbleras: skriv `"C:\\temp"` eller använd `"C:/temp"`. Ett ensamt bakstreck i `"C:\temp"` gör att `\t` blir en tabulator och sökvägen blir ogiltig.
-
-4. Tilldela och verifiera den minsta Exchange RBAC-behörighet som behövs för `Get-MessageTraceV2` och parametrarna `StartDate`, `EndDate`, `ResultSize`, `SenderAddress`, `RecipientAddress`. Utred rollerna i den egna miljön med ett administratörskonto:
-
-   ```powershell
-   Get-ManagementRole -Cmdlet Get-MessageTraceV2
-   Get-ManagementRoleEntry '*\Get-MessageTraceV2'
-   ```
-
-   Utgå från resultatet när ni skapar eller väljer rollgrupp. Verktyget tilldelar inga roller. Dela inte administratörskonton mellan handläggare och ge inte Global Administrator bara för detta verktyg. Följ [Microsofts metod för att hitta cmdletbehörigheter](https://learn.microsoft.com/en-us/powershell/exchange/find-exchange-cmdlet-permissions?view=exchange-ps).
-
-5. Bestäm godkänd lagringsplats, åtkomst, gallring och utlämningsrutin. Filer får lagringsplatsens normala behörigheter. Distribuera skript och inställningar med lämpligt skrivskydd/signering.
-6. Genomför acceptanstestet nedan med handläggarens konto innan driftsättning.
-
-Domän- och adressfiltreringen är klientfunktioner för att avgränsa sökningar. En användare med Exchangebehörighet kan köra andra kommandon utanför verktyget. Om handläggare inte ska ha den underliggande sökbehörigheten behövs en separat tjänst med serverbaserad behörighetskontroll. Det ingår inte här.
+Exportmappen är ett förvalt alternativ, ingen åtkomstspärr. Använd `/` i JSON-sökvägar eller dubbla bakstreck: `C:/temp` respektive `C:\\temp`. Ett ensamt bakstreck i `C:\temp` gör `\t` till en tabulator. Tom exportmapp låter användaren välja plats själv.
 
 ## Handläggarens arbetsgång
 
-1. Öppna **Starta.cmd**, skriv ditt arbetskonto och tryck på **Logga in**. Microsoft hanterar inloggning och eventuell MFA. Skriptet sparar inga lösenord.
-2. Ange den exakta adress som begäran gäller, normalt invånarens adress. Valfritt: ange verksamhetens exakta adress för att begränsa träffarna ytterligare.
-3. Välj period och riktning. **Till verksamheten** söker angiven adress som avsändare; **Från verksamheten** söker den som mottagare. **Båda** gör båda sökningarna. Även en intern adress kan användas som sökadress.
-4. Alla inmatade tider är svensk tid, oavsett datorns tidszon. Sluttiden är ett klockslag: `2026-10-20 00:00` avser början av den 20 oktober. Välj nästa dygns `00:00` för att täcka en hel dag; exakt gränstid kan ingå i båda perioderna. Standardperioden är de föregående sju hela dygnen.
-5. Tryck på **Sök**. Markera relevanta rader med Ctrl/klick eller Shift/klick. Ctrl+A i träfflistan markerar alla. Inga rader väljs automatiskt. Om sökvillkor ändras rensas resultatet.
-6. Kryssa endast vid behov i **Visa och exportera ämnesrad**. Granska träffarna och välj **Exportera valda träffar** samt en godkänd lagringsplats.
-7. Öppna HTML-rapporten och granska innehållet enligt verksamhetens rutin innan utlämning. Skicka underlaget genom ordinarie kanal.
+1. Öppna **Starta.cmd** och tryck på **Logga in**.
+2. Tryck på **Öppna inloggning**, ange engångskoden på Microsofts sida och logga in med arbetskontot. Följ organisationens MFA-anvisningar och återvänd till verktyget.
+3. Ange den exakta adress som begäran gäller, normalt invånarens adress. Ange vid behov även verksamhetens exakta adress.
+4. Välj period och riktning. **Till verksamheten** söker adressen som avsändare; **Från verksamheten** söker den som mottagare. **Båda** gör båda sökningarna.
+5. Tryck på **Sök**. Markera rader med Ctrl/klick eller Shift/klick. Ctrl+A i träfflistan väljer alla. Inget väljs automatiskt.
+6. Ämne är avstängt som standard och skickas då inte till klienten. Ändras ämnestillvalet efter en sökning rensas resultatet; sök igen.
+7. Välj **Exportera valda träffar**, välj godkänd lagringsplats och granska rapporten enligt verksamhetens utlämningsrutin.
 
-Varje export skapar en ny undermapp med:
+Datum anges alltid i svensk tid. Standardperioden är föregående sju hela dygn. Sluttiden `2026-10-20 00:00` betyder början av den 20 oktober. Ange nästa dygns `00:00` för att täcka en hel dag; exakt gränstid kan ingå i två sökningar. Ogiltiga eller tvetydiga klockslag vid tidsomställning avvisas.
 
-| Fil | Innehåll och användning |
+Användartoken finns bara i processens minne och rensas när fönstret stängs. När den löper ut behöver användaren logga in igen. Inga lösenord sparas och inga mejl skickas.
+
+## Export och tolkning
+
+Varje export skapar en ny undermapp:
+
+| Fil | Användning |
 | --- | --- |
-| Transportlogg.html | Läsbar rapport med valda träffar, sökvillkor och förklaringar. Kan öppnas i webbläsare och skrivas ut eller sparas som PDF därifrån. |
-| Transportlogg.csv | Samma valda träffar, semikolonseparerat med UTF-8 BOM för svenska Excel. Ämne ingår bara om det har valts. |
-| Internt-underlag.json | Internt sökunderlag med Windowsanvändare, angivet inloggningskonto, sökvillkor och valda spårnings-ID. Hantera separat från utlämningsfilerna. |
+| Transportlogg.html | Läsbar rapport. Kan skrivas ut eller sparas som PDF via webbläsaren. |
+| Transportlogg.csv | Samma valda träffar, semikolonseparerat med UTF-8 BOM för svenska Excel. Ämne endast om valt. |
+| Internt-underlag.json | Windowsanvändare, verifierat användarnamn från tjänsten, sökvillkor, tjänstens referens och valda spårnings-ID. Hantera separat från utlämningsfilerna. |
 
-Internt-underlag.json skapas vid export, inte vid varje sökning. Det är inte en manipulationsskyddad revisionslogg. Arbetskontot är den uppgift som angavs vid inloggning, inte ett separat verifierat identitetsintyg. HTML/CSV innehåller inga interna spårnings-ID, IP-adresser eller inloggningskonton. Rapporten kan fortfarande innehålla andra personers adresser och känsliga ämnesrader; ett urval är inte automatisk maskning eller sekretessprövning.
+Filer får lagringsplatsens vanliga behörigheter. CSV-formler neutraliseras och HTML kodas som text. Ingen mejltext eller bilaga hämtas. Rapporten kan ändå innehålla personuppgifter och känsliga ämnen; radurval ersätter inte granskning eller maskning. Det interna underlaget är ingen manipulationsskyddad revisionslogg.
 
-## Vad resultatet betyder
+Varje träff avser ett meddelande till en mottagare; samma mejl kan ge flera rader. **Levererat** visar transportstatus, inte att mejlet lästs. För externa mottagare kan det avse mottagarens e-postsystem. Inga träffar bevisar inte att ett mejl aldrig skickats. Kontrollera alias, adresser, period och spårningsfördröjning. Grupper och vidarebefordran kan kräva IT:s analys.
 
-En träff avser ett meddelande till en mottagare. Samma mejl kan därför ge flera rader. Statuskoden från Exchange bevaras tillsammans med en svensk förklaring. **Delivered** bevisar inte att mottagaren läst mejlet. För externa mottagare kan status avse leverans till mottagarens e-postsystem.
+Graph stöder upp till 90 dagars historik, högst tio dygn per anrop och sidindelning. Se [Microsofts API-referens](https://learn.microsoft.com/en-us/graph/api/messagetracingroot-list-messagetraces?view=graph-rest-1.0). Tjänsten följer alla sidor och begränsar sökningen till **10 000 träffar** och en tidsbudget. Om sökningen blir för stor eller kräver för lång väntan avbryts den utan exporterbart delresultat. Begränsa då perioden eller ange verksamhetsadress. Fönstret kan vara upptaget under sökningen.
 
-Inga träffar bevisar inte att ett mejl aldrig skickats. Kontrollera rätt adresser, alias, period och eventuell spårningsfördröjning. Gruppadresser, vidarebefordran, karantän eller oklara statusar kan kräva IT:s analys och händelsedetaljer. Verktyget hämtar sammanfattande transportstatus, inte `Get-MessageTraceDetailV2` eller postlådans innehåll.
-
-Enligt [Microsofts dokumentation för Get-MessageTraceV2](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-messagetracev2?view=exchange-ps) är data sökbara upp till 90 dagar bakåt, högst tio dygn per anrop och högst 5 000 träffar per anrop. Verktyget delar långa perioder och fulla resultat i mindre tidsintervall och tar bort dubbletter. Om ett ensekundsintervall fortfarande är fullt avbryts sökningen utan exporterbart resultat. Sökningen begränsas också till 50 000 träffar. Meddelanden till fler än 1 000 mottagare kan kräva separat IT-sökning med `MessageTraceId`, enligt Microsoft. Rapporten ska inte användas som garanti för fullständig återgivning i sådana fall.
-
-Anropshastigheten begränsas lokalt till högst 80 anrop per femminutersfönster. Andra klienter delar tenantens begränsning; kvarstående fel avbryter sökningen efter tre försök. Microsofts gränser och modulkrav beskrivs även i [dokumentationen om meddelandespårning](https://learn.microsoft.com/en-us/Exchange/monitoring/trace-an-email-message/message-trace-modern-eac). Fönstret arbetar synkront och kan vara upptaget under långa sökningar eller väntan på Exchange. Det finns ingen avbrytknapp i denna version.
-
-## Kontroll och acceptanstest
-
-Kör de fristående testerna utan Exchangeanslutning:
+## Test
 
 ```powershell
 powershell.exe -NoProfile -File .\Test-Transportlogg.ps1
+powershell.exe -NoProfile -File .\Test-Graph.ps1
+powershell.exe -NoProfile -File .\Test-Client.ps1
+powershell.exe -NoProfile -File .\Test-Service.ps1
 ```
 
-Testerna verifierar bland annat svensk sommar/vintertid, ogiltiga datum/adresser, domänavgränsning, båda riktningar, stora resultat, dubbletter, felhantering, exporturval, ämnestillval, HTML-kodning och skydd mot CSV-formler. CSV-text som kan tolkas som en formel får en inledande apostrof.
+Testerna använder simulerade svar och verifierar bland annat datum, filter, export, Graph-sidor, tokenhantering, inloggningsprotokoll, serverroller och gränser. Verklig inloggning, Azurekonfiguration och fönstrets layout behöver verifieras enligt IT-guidens acceptanstest.
 
-Före skarp användning behöver IT jämföra resultatet med Exchange admin center för ett känt inkommande och ett känt utgående testmejl. Kontrollera även ett mejl med flera mottagare, en sökning som korsar svensk sommartidsgräns, en period över tio dygn, en tom sökning och kontots behörigheter. Verifiera att valda rader och deras tider stämmer i både rapport och CSV. Ingen skarp Exchangeanslutning har verifierats vid utvecklingen. Fönstret har startats utan startupfel, men skärmkontroll och klickflödet kunde inte verifieras i utvecklingsmiljön. Kontrollera därför även fönstrets layout och handläggarflödet lokalt i demoläget.
-
-## Filer
-
-`Start-Transportlogg.ps1` innehåller fönstret. `Transportlogg.Core.ps1` innehåller sök- och exportfunktioner. `Installningar.json` är IT:s konfiguration. `Starta.cmd` och `Starta-demo.cmd` är handläggarens startfiler. PowerShellfilerna sparas med UTF-8 BOM för att svenska tecken ska fungera i Windows PowerShell 5.1.
+MIT-licens, se [LICENSE](LICENSE).
