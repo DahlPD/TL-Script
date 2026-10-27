@@ -63,6 +63,7 @@ function Invoke-TransportSearch {
         [Parameter(Mandatory)][datetime]$EndUtc,
         [Parameter(Mandatory)][scriptblock]$Query,
         [switch]$CompleteQuery,
+        [ValidateRange(1,3)][int]$QueryAttempts = 3,
         [scriptblock]$Progress = { param($Message) },
         [int]$MaximumRows = 50000
     )
@@ -106,14 +107,14 @@ function Invoke-TransportSearch {
                     while ($requests.Count -gt 0 -and $requests.Peek() -lt [datetime]::UtcNow.AddMinutes(-5)) { [void]$requests.Dequeue() }
                 }
                 $batch = @()
-                for ($attempt = 0; $attempt -lt 3; $attempt++) {
+                for ($attempt = 0; $attempt -lt $QueryAttempts; $attempt++) {
                     try {
                         $requests.Enqueue([datetime]::UtcNow)
                         $batch = @(& $Query $parameters)
                         break
                     } catch {
-                        if ($attempt -eq 2) { throw "Sökningen avbröts. Inget fullständigt resultat finns. Exchange: $($_.Exception.Message)" }
-                        & $Progress 'Exchange svarade med ett fel. Försöker igen ...'
+                        if ($attempt -eq ($QueryAttempts - 1)) { throw "Sökningen avbröts. Inget fullständigt resultat finns. $($_.Exception.Message)" }
+                        & $Progress 'Sökningen svarade med ett fel. Försöker igen ...'
                         Start-Sleep -Seconds (5 * ($attempt + 1))
                     }
                 }

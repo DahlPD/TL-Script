@@ -1,255 +1,129 @@
-# IT-guide: konfigurera Transportlogg steg för steg
+# IT-guide – enklaste versionen, direkt mot Graph
 
-**Mål:** en handläggare ska kunna öppna `Handläggare/Starta.cmd`, logga in med sitt arbetskonto, söka transportloggar och exportera valda träffar. Ingen extra programvara eller PowerShellmodul installeras på handläggarens dator. Handläggaren behöver ingen egen Exchange-administratörsroll.
+IT gör konfigurationen i webbläsaren. Handläggaren får fem filer och behöver ingen installation. Ingen Azure Function, Azure-prenumeration, Azure CLI eller PowerShellmodul krävs för den här versionen.
 
-Guiden avser projektversionen med mappen **Handläggare** och serverdelen i **azure**. Kommandona körs av IT på en Windowsdator, i PowerShell, från projektets rotmapp. Behåll samma PowerShellfönster genom stegen så att variablerna finns kvar.
+**Flöde:** Handläggare → Microsoftinloggning via er app → Microsoft Graph → lokal rapport.
 
-Status vid framtagning: koden har testats med simulerade svar och Azure-mallen har kompilerats. Guiden har inte genomförts mot en faktisk tenant. Genomför först i er testmiljö och kontrollera resultaten nedan innan klienten lämnas ut.
+Guiden följer Microsofts dokumenterade delegerade `ExchangeMessageTrace.Read.All`. Verifiera med ett vanligt testkonto utan Exchange-adminroller innan ni tar lösningen i bruk; åtkomsten har inte testats mot en riktig tenant under utvecklingen.
 
-## Översikt: vad sätts upp?
+## 1. Skapa en appregistrering
 
-| Del | Uppgift |
-| --- | --- |
-| App registration och Enterprise Application `transportlogg-api` | Skyddar vårt API. Rollen `Trace.Reader` avgör vilka handläggare som får använda det. |
-| App registration och Enterprise Application `transportlogg-klient` | Låter Windowsverktyget logga in användaren och anropa vårt API. |
-| Azure Function | Kontrollerar användarens åtkomst och genomför sökningen. |
-| Funktionens managed identity | Har Graph-behörigheten `ExchangeMessageTrace.Read.All`. |
-| Microsofts Message Trace-service principal | Förberedelse som krävs av Microsofts Message Trace-API. Skapas om den saknas. |
-| Mappen Handläggare | De fem filer som distribueras till användaren. |
+1. Öppna [Microsoft Entra admin center](https://entra.microsoft.com/) med ett administratörskonto som får registrera appar och ge nödvändigt administratörsgodkännande.
+2. Välj rätt tenant.
+3. Gå till **App registrations → New registration**.
+4. Ange exempelvis **Transportlogg** som namn.
+5. Välj **Accounts in this organizational directory only**, alltså single tenant.
+6. Lämna Redirect URI tomt för device code-flödet och välj **Register**.
+7. Anteckna **Application (client) ID** och **Directory (tenant) ID** från Översikt. Använd inte Object ID i klientinställningarna.
 
-Appregistreringarnas namn får ett annat prefix om ni väljer ett annat värde än `transportlogg` i steg 3. Applikationernas **client ID**, deras **object ID** och användarens/gruppens **object ID** är olika identifierare och ska inte blandas ihop.
+Det skapas också en motsvarande Enterprise Application. Det är er enda egna applikation i denna lösning.
 
-## Steg 1 – Kontrollera IT:s behörigheter och miljö
+## 2. Tillåt publik klientinloggning
 
-1. Säkerställ att ni har en Azure-prenumeration i rätt Entra-tenant och en godkänd plats för resursgruppen.
-2. Säkerställ rätt att skapa Azure-resurser. Rollen **Contributor** på en lämplig omfattning kan användas för resursdistributionen. Eftersom skriptet även skapar resursgruppen måste kontot kunna göra detta på prenumerationsnivå, alternativt måste en behörig administratör förbereda resursgruppen.
-3. Säkerställ rätt att skapa App registrations, service principals, samtycken och approllstilldelningar i Entra. Microsoft anger **Privileged Role Administrator** som lägsta stödda inbyggda roll för tilldelning av Microsoft Graph-approller. Aktivera administrativa roller enligt er PIM-rutin. En Azure-roll ger inte automatiskt motsvarande Entra-behörighet. [Microsofts rollkrav](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-post-approleassignments?view=graph-rest-1.0).
-4. Administrationsskripten använder Microsoft Graph genom Azure CLI:s inloggade administratör. Administrationsklienten behöver tillämpliga delegerade Graph-behörigheter för `Application.ReadWrite.All`, `AppRoleAssignment.ReadWrite.All` och `DelegatedPermissionGrant.ReadWrite.All`. Kontots roll och tokenens behörigheter är separata krav. Dessa behörigheter avser administrationen, inte handläggarnas klientapplikation. [Samtyckeshantering](https://learn.microsoft.com/en-us/graph/api/oauth2permissiongrant-post?view=graph-rest-1.0).
-5. Kontrollera med ansvarig för Conditional Access att **device code-flödet** tillåts för denna lösning. Om det är blockerat behöver inloggningsmetoden anpassas innan användning. [Microsofts beskrivning av flödet](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code).
+1. Öppna appregistreringen **Transportlogg**.
+2. Gå till **Authentication → Advanced settings**.
+3. Sätt **Allow public client flows** till **Yes** och spara.
 
-**Kontrollpunkt:** det finns en ansvarig administratör för både Azure och Entra. Handläggarnas konton behöver inte få dessa administrativa roller.
+Skapa ingen client secret och inget certifikat. Device code kräver ingen redirect URI. Organisationens Conditional Access måste tillåta detta flöde. Om policyn blockerar det behöver klientens inloggningsmetod anpassas; ändra inte policy på handläggarens dator för att kringgå det. [Microsofts klientkonfiguration](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-desktop-app-registration).
 
-## Steg 2 – Förbered administrationsdatorn och projektmappen
+## 3. Ge delegerad Graph-behörighet
 
-1. Hämta projektversionen som innehåller mappen **Handläggare**. Packa upp hela projektet på IT:s dator. Handläggarna ska senare bara få den mappen.
-2. Installera Azure CLI på **IT:s dator** om det saknas. Använd organisationens godkända installationsmetod. Microsofts dokumenterade WinGet-kommando är:
+1. Öppna **API permissions → Add a permission → Microsoft Graph**.
+2. Välj **Delegated permissions**.
+3. Sök efter och lägg till **ExchangeMessageTrace.Read.All**.
+4. Välj **Grant admin consent** för er tenant och bekräfta som behörig administratör.
+5. Kontrollera att raden har typ **Delegated** och att administratörsgodkännandet är beviljat.
 
-   ```powershell
-   winget install --exact --id Microsoft.AzureCLI
+Klienten använder även standardscopen `openid profile` för inloggning och ett valfritt kontovisningsnamn. Den anropar inte `/me` och behöver inte `User.Read` för det. Lägg inte till **Application permissions**, `Exchange.ManageAsApp`, administrativa katalogbehörigheter eller klienthemligheter till handläggarapplikationen.
+
+[Microsofts messageTraces v1.0-referens](https://learn.microsoft.com/en-us/graph/api/messagetracingroot-list-messagetraces?view=graph-rest-1.0) anger `ExchangeMessageTrace.Read.All` för delegerad åtkomst.
+
+## 4. Tilldela bara avsedda användare
+
+1. Gå till **Enterprise applications → All applications → Transportlogg**.
+2. Öppna **Properties**, sätt **Assignment required?** till **Yes** och spara.
+3. Öppna **Users and groups → Add user/group**.
+4. Tilldela först en vanlig testhandläggare. Om rollval visas används **Default Access**; den här appen har ingen egen `Trace.Reader`-roll.
+5. Tilldela fler användare eller en godkänd grupp efter acceptanstest. Kontrollera licensförutsättningar om gruppbaserad tilldelning används.
+
+Testa tilldelningen med vanliga konton. En Global Administrator är inte ett lämpligt testkonto för tilldelningskravet. [Microsofts instruktion för användarbegränsning](https://learn.microsoft.com/en-us/entra/identity-platform/howto-restrict-your-app-to-a-set-of-users).
+
+## 5. Kontrollera Microsofts Message Trace-förberedelse
+
+Microsoft kräver också att tenantens service principal för deras Message Trace-applikation finns. Det är en Microsoftidentitet, separat från er egen app. Om den redan finns ska ni återanvända den.
+
+IT kan kontrollera och vid behov skapa den via [Microsoft Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer), utan att installera verktyg:
+
+1. Logga in i Graph Explorer i rätt tenant som behörig administratör.
+2. Ge Graph Explorer de administrativa rättigheter som behövs för just detta steg, exempelvis `Application.ReadWrite.All` med erforderligt godkännande. Detta gäller **administrationsverktyget**, inte Transportlogg-appen. Följ er vanliga rutin för tillfällig administrativ åtkomst.
+3. Kör följande **GET**:
+
+   ```http
+   GET https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '8bd644d1-64a1-4d4b-ae52-2e0cbf64e373'
    ```
 
-3. Stäng och öppna PowerShell efter installationen. Se [Microsofts installationsguide](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-windows?view=azure-cli-latest).
-4. Gå till projektets rotmapp. Ersätt exempelvägen med var ni har lagt projektet:
+4. Om `value` innehåller ett objekt finns förberedelsen redan. Om listan är tom, kör följande **POST** med JSON-kroppen:
 
-   ```powershell
-   Set-Location -LiteralPath 'C:\IT\TL-Script'
-   az version
-   az bicep install
-   az bicep version
+   ```http
+   POST https://graph.microsoft.com/v1.0/servicePrincipals
+   Content-Type: application/json
    ```
 
-5. Kontrollera att rätt projektfiler finns:
-
-   ```powershell
-   Test-Path -LiteralPath '.\Handläggare\Starta.cmd'
-   Test-Path -LiteralPath '.\azure\New-EntraApplications.ps1'
-   Test-Path -LiteralPath '.\azure\Deploy-Azure.ps1'
+   ```json
+   {
+     "appId": "8bd644d1-64a1-4d4b-ae52-2e0cbf64e373"
+   }
    ```
 
-**Förväntat:** alla tre kontroller returnerar `True`. Om Handläggare-mappen saknas har ni en äldre projektversion. Följ organisationens ordinarie policy för skriptkörning och signering.
+5. En ny provisionering kan behöva flera timmar att slå igenom. Hantera administratörens åtkomst till Graph Explorer enligt er ordinarie rutin efteråt.
 
-## Steg 3 – Samla och fyll i era värden
+[Microsofts förberedelser för exchangeMessageTrace](https://learn.microsoft.com/en-us/graph/api/resources/exchangemessagetrace?view=graph-rest-1.0).
 
-Hämta identifierarna i rätt tenant:
+## 6. Fyll i klientens enda inställningsfil
 
-| Värde | Var IT hittar/väljer det |
-| --- | --- |
-| Tenant ID | Entra admin center → Entra ID → Overview/Översikt → Tenant ID. |
-| Subscription ID | Azure Portal → Subscriptions/Prenumerationer → aktuell prenumeration → Subscription ID. |
-| Användarens object ID | Entra → Users/Användare → testhandläggaren → Object ID. Börja gärna med direkt användartilldelning. |
-| Gruppens object ID, om grupp används | Entra → Groups/Grupper → vald säkerhetsgrupp → Object ID. Kontrollera licensförutsättningar för gruppbaserad apptilldelning. |
-| Domäner | De faktiska e-postdomäner som verksamhetens adresser använder. Ange underdomäner separat. |
-| Funktionsnamn | Ett globalt unikt namn, exempelvis `minorg-transportlogg-test`. Skriptet tillåter 3–50 små bokstäver, siffror och bindestreck, med bokstav/siffra först och sist. |
-| Region och resursgrupp | Välj enligt er Azure-standard. Exemplet använder `swedencentral`. |
+Öppna **Handläggare/Installningar.json** och fyll i:
 
-Fyll i blocket nedan. GUID-värdena är exempel och ska ersättas. Skriv inte in lösenord eller klienthemligheter.
-
-```powershell
-$TenantId = '11111111-1111-1111-1111-111111111111'
-$SubscriptionId = '22222222-2222-2222-2222-222222222222'
-$HandlaggarObjectId = '33333333-3333-3333-3333-333333333333'
-$EntraName = 'transportlogg'
-$ResourceGroup = 'rg-transportlogg-test'
-$FunctionName = 'minorg-transportlogg-test'
-$Location = 'swedencentral'
-$AllowedDomains = @('kommun.se', 'bolag.kommun.se')
+```json
+{
+  "TenantId": "ER-TENANTS-GUID",
+  "ClientId": "TRANSPORTLOGG-APPENS-CLIENT-GUID",
+  "VerksamhetensDomaner": ["kommun.se", "bolag.kommun.se"],
+  "Exportmapp": ""
+}
 ```
 
-**Kontrollpunkt:** GUID:erna kommer från er miljö och funktionsnamnet är valt för just er installation. Ett objekts visningsnamn eller e-postadress kan inte ersätta dess object ID i tilldelningsskriptet.
+- TenantId och ClientId kommer från appregistreringens Översikt.
+- Ange verksamhetens faktiska e-postdomäner. Underdomäner behöver egna poster.
+- Tom Exportmapp låter handläggaren välja plats. Alternativt anges exempelvis `C:/GodkandLagring`.
+- Använd `/` eller dubbla bakstreck i JSON-sökvägar. Ett ensamt bakstreck i `C:\temp` gör `\t` till en tabulator.
+- Inga ApiAppId, ApiBasUrl, funktionsnycklar eller hemligheter behövs.
 
-## Steg 4 – Logga in mot rätt tenant och prenumeration
+Domänlistan begränsar sökningen i vårt verktyg. Den är **ingen säkerhetsspärr för användarens övriga Graph-anrop**. Tilldela bara personer som ska ha den underliggande spårningsåtkomsten.
 
-```powershell
-az login --tenant $TenantId
-az account set --subscription $SubscriptionId
-az account show --query '{Tenant:tenantId,Subscription:id,Namn:name}' -o table
-```
+## 7. Prova på en testdator
 
-Slutför Microsofts inloggning som IT-administratör.
+1. Bekräfta att Windows PowerShell 5.1 och skriptkörning är tillåtna enligt er klientpolicy. Ingen installations- eller körningspolicyändring görs av verktyget.
+2. Öppna **Handläggare/Starta.cmd** och välj **Logga in**.
+3. Välj **Öppna inloggning**, ange koden på Microsofts sida och logga in som testhandläggaren. Följ eventuell MFA.
+4. Återvänd till verktyget. Det gör ett avgränsat anrop mot transportlogg-API:t innan sökknappen aktiveras.
+5. Verifiera att kontot **saknar Exchange-adminroller**. En lyckad administratörsinloggning bevisar inte att handläggarflödet fungerar.
+6. Sök efter kända testmejl i båda riktningarna och jämför med Exchange admin center. Kontrollera tider, adresser och status.
+7. Välj några rader och kontrollera HTML, CSV och det separata interna underlaget. Prova även ämnestillvalet, tomt resultat och en period över tio dygn.
+8. Prova ett vanligt konto utan apptilldelning: inloggning/åtkomst ska nekas enligt Entra-konfigurationen.
 
-**Förväntat:** tabellen visar exakt de värden som angavs i steg 3. Avbryt och rätta inloggningen om tenant eller prenumeration är fel.
+**Godkänn först när vanligt handläggarkonto kan söka och otilldelat konto nekas.** Om Graph ger 403 trots rätt delegerad behörighet och godkännande behöver IT utreda tenantens åtkomstkrav. Verktyget tilldelar inga Exchange-roller automatiskt.
 
-## Steg 5 – Bygg och kontrollera koden lokalt
-
-Detta steg skapar inga Azure- eller Entra-resurser:
+Valfria offlinekontroller på IT:s dator, utan nätverksanrop:
 
 ```powershell
 powershell.exe -NoProfile -File .\Test-Transportlogg.ps1
 powershell.exe -NoProfile -File .\Test-Graph.ps1
 powershell.exe -NoProfile -File .\Test-Client.ps1
-powershell.exe -NoProfile -File .\Test-Service.ps1
-.\azure\Build-Package.ps1
-az bicep build --file .\azure\main.bicep --outfile .\dist\main.json
-powershell.exe -NoProfile -File .\Test-AzurePackage.ps1
 ```
 
-**Förväntat:** testerna avslutas med `Godkänt`. Denna version har 37 + 22 + 21 + 26 + 15 = **121 kontroller**. Bicep-kompileringen ska lyckas och `dist/Transportlogg-Function.zip` ska finnas. Fortsätt inte om ett test eller kompileringen misslyckas.
+## 8. Distribuera mappen Handläggare
 
-Prova även `Starta-demo.cmd` i projektroten. Kontrollera att fönstret öppnas och att fiktiva rader kan väljas och exporteras.
-
-## Steg 6 – Skapa Entra-applikationerna och tilldela testhandläggaren
-
-Detta steg gör konfigurationsändringar i Entra:
-
-```powershell
-.\azure\New-EntraApplications.ps1 -Name $EntraName -UserOrGroupObjectId $HandlaggarObjectId
-```
-
-Skriptet skapar API-applikationen och den publika klienten, sätter upp scopet `Transportlogg.Access`, approllen `Trace.Reader`, nödvändigt samtycke och tilldelning. Det provisionerar också Microsofts Message Trace-service principal om den saknas.
-
-**Förväntat:** skriptet skriver att konfigurationen sparats i `.deployment/transportlogg-entra.json`, med ert valda prefix om ni ändrat det.
-
-Kontrollera därefter i **Entra admin center**:
-
-1. Under **App registrations** finns `<EntraName>-api` och `<EntraName>-klient`.
-2. API:ts **Expose an API** visar `api://<ApiAppId>` och scopet `Transportlogg.Access`.
-3. API:ts **App roles** innehåller `Trace.Reader`, med visningsnamnet *Transportlogg – handläggare*.
-4. Under **Enterprise applications**, öppna **API-applikationen**. Kontrollera att **Assignment required?** är `Yes`.
-5. Under API-applikationens **Users and groups** har testhandläggaren/gruppen rollen *Transportlogg – handläggare*.
-6. Klientapplikationen har delegerad åtkomst till vårt API. Den ska inte ha `ExchangeMessageTrace.Read.All` eller andra Graph-rättigheter för att söka loggar.
-
-Behåll `.deployment/<EntraName>-entra.json` på IT:s godkända plats. Skriptet återanvänder identifierarna vid återkörning. Radera inte filen för att försöka lösa ett fel. Om ett skapande avbrutits innan en identifierare sparats: kontrollera först i Entra om objektet redan finns.
-
-**Kontrollpunkt:** användartilldelningen finns på **API:ts Enterprise Application**. Det räcker inte att bara lägga till användaren på klientapplikationen.
-
-## Steg 7 – Distribuera Azure Function och ge tjänsten Graph-behörighet
-
-Detta steg skapar Azure-resurser och kan medföra Azurekostnader:
-
-```powershell
-$EntraConfigPath = Join-Path '.\.deployment' ($EntraName + '-entra.json')
-$deployParameters = @{
-    ResourceGroup = $ResourceGroup
-    FunctionName = $FunctionName
-    EntraConfig = $EntraConfigPath
-    AllowedDomains = $AllowedDomains
-    Location = $Location
-}
-.\azure\Deploy-Azure.ps1 @deployParameters
-```
-
-Skriptet skapar Function App, Consumption-plan, Storage, Log Analytics och Application Insights. Det aktiverar managed identity och tilldelar **den identiteten** `ExchangeMessageTrace.Read.All` i Microsoft Graph, samt laddar upp serverpaketet. Det konfigurerar också obligatorisk Entra-autentisering framför funktionen.
-
-**Förväntat:** avslutningsmeddelandet anger sökvägen till `.deployment/<FunctionName>-Installningar.json`. Inga klienthemligheter för Graph behöver skapas eller distribueras.
-
-Om en ny managed identity ännu inte syns i Graph kan behörighetstilldelningen behöva återköras efter propagation. Microsofts Message Trace-förberedelser kan också ta flera timmar att slå igenom. [Microsofts onboardingguide](https://learn.microsoft.com/en-us/exchange/monitoring/trace-an-email-message/graph-api-message-trace).
-
-## Steg 8 – Kontrollera Azurekonfigurationen
-
-Öppna **Azure Portal → Function App → er funktion** och kontrollera:
-
-| Kontroll | Förväntat resultat |
-| --- | --- |
-| Functions | Funktionen `Trace` finns, med routen `/api/transportlogg`. |
-| Identity → System assigned | `On`. Anteckna principal/object ID för förvaltningen. |
-| Authentication | Microsoft identity provider är aktiverad. Autentisering krävs och anonyma anrop ska få HTTP 401. |
-| Identity provider | Rätt tenant-issuer, API-audience och tillåten klient. |
-| Environment variables / Configuration | `TL_TENANT_ID`, `TL_CLIENT_ID` och `TL_ALLOWED_DOMAINS` har rätt värden. |
-
-Visa endast lösningens egna inställningar från PowerShell:
-
-```powershell
-az functionapp config appsettings list --resource-group $ResourceGroup --name $FunctionName --query "[?starts_with(name, 'TL_')].{Namn:name,Varde:value}" -o table
-```
-
-Graph-behörigheten hör till funktionens **managed identity**, inte API-appregistreringen eller klienten. Om ni granskar den i Entra, hitta rätt identitet via principal/object ID och kontrollera tilldelningen till Microsoft Graph.
-
-HTTP-triggern använder `authLevel: anonymous` därför att ingen gemensam funktionsnyckel ska finnas på datorerna. **App Service Authentication/Easy Auth framför triggern måste vara obligatorisk.** Stäng inte av den för att få ett test att fungera. [Microsofts beskrivning av autentiseringskonfigurationen](https://learn.microsoft.com/en-us/azure/templates/microsoft.web/sites/config-authsettingsv2).
-
-## Steg 9 – Verifiera att anonyma anrop nekas
-
-Läs de genererade klientinställningarna och gör ett anrop utan token:
-
-```powershell
-$ClientSettingsPath = Join-Path '.\.deployment' ($FunctionName + '-Installningar.json')
-$ClientSettings = Get-Content -LiteralPath $ClientSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$ApiUrl = $ClientSettings.ApiBasUrl.TrimEnd('/') + '/api/transportlogg'
-$StatusCode = 0
-try {
-    $probe = Invoke-WebRequest -Uri $ApiUrl -Method Post -Body '{"action":"session"}' -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop
-    $StatusCode = [int]$probe.StatusCode
-} catch {
-    if ($null -eq $_.Exception.Response) { throw }
-    $StatusCode = [int]$_.Exception.Response.StatusCode
-}
-if ($StatusCode -ne 401) { throw "Kontrollera autentiseringen: förväntade 401, fick $StatusCode." }
-'Godkänt: anonyma anrop nekas med HTTP 401.'
-```
-
-**Kontrollpunkt:** svaret är HTTP **401**. Ett 200-svar med data eller ett 200-svar med en inloggningssida är inte godkänt för denna kontroll.
-
-## Steg 10 – Fyll i klientinställningarna
-
-Efter godkänd serverkontroll kopieras de genererade inställningarna till handläggarmappen. Detta skriver över den befintliga filen där:
-
-```powershell
-Copy-Item -LiteralPath $ClientSettingsPath -Destination '.\Handläggare\Installningar.json' -Force
-```
-
-Öppna därefter `Handläggare/Installningar.json` och kontrollera:
-
-| Inställning | Betydelse |
-| --- | --- |
-| TenantId | Organisationens tenant ID. |
-| ClientId | Klientappens Application (client) ID, inte object ID. |
-| ApiAppId | API-appens Application (client) ID, inte object ID. |
-| ApiBasUrl | Funktionens HTTPS-basadress. Ingen `/api/transportlogg`, funktionsnyckel eller frågeparameter ska läggas till. |
-| Exportmapp | Godkänd förvald exportplats, eller tom sträng om handläggaren ska välja själv. |
-
-Exempel på exportmapp: `"Exportmapp": "C:/GodkandLagring/Transportloggar"`. Använd framåtsnedstreck eller dubbla bakstreck i JSON. Skriv inte `C:\temp` med ett ensamt bakstreck; `\t` blir då en tabulator.
-
-Den lokala exportmappen är ett förvalt val, ingen lagringsspärr. Verksamhetens sökdomäner ska inte läggas in i klientfilen; de styrs av funktionen.
-
-## Steg 11 – Genomför acceptanstest med handläggarkonto
-
-Använd ett vanligt tilldelat konto, utan Exchange-administratörsroller:
-
-1. Öppna `Handläggare/Starta.cmd` och välj **Logga in**.
-2. Välj **Öppna inloggning**. Ange den visade koden hos Microsoft och logga in som testhandläggaren, inklusive eventuell MFA.
-3. Kontrollera att rätt användarnamn visas efter återgång till verktyget.
-4. Skicka ett känt testmejl från en extern testadress till en verksamhetsadress. Skicka även ett mejl åt andra hållet. Låt meddelandena hinna bli synliga i spårningen.
-5. Sök i respektive riktning och jämför med Exchange admin center. Kontrollera svensk tid, UTC, avsändare, mottagare och status.
-6. Välj en del av träffarna och exportera. Kontrollera att HTML och CSV bara innehåller valda rader och att `Internt-underlag.json` hanteras separat.
-7. Prova ämnestillvalet. Resultatet ska rensas när valet ändras; efter ny sökning ska ämnet bara inkluderas när det begärts.
-8. Prova ett konto utan `Trace.Reader`. Det ska inte kunna skapa session eller söka.
-9. Prova en verksamhetsadress utanför tillåtna domäner. Sökningen ska nekas.
-10. Kontrollera ett tomt resultat, flera mottagare och en period längre än tio dygn. Fördröjning, timeout eller annan felhantering ska inte lämna ett exporterbart delresultat.
-
-**Kontrollpunkt:** dokumentera testkonto, datum, referenser och godkännande enligt er rutin. `Levererat` visar transportstatus och är inget läskvitto.
-
-## Steg 12 – Distribuera endast Handläggare-mappen
-
-Kopiera hela mappen **Handläggare** till användarnas godkända plats. Den ska innehålla exakt:
+Distribuera hela mappen med dessa fem filer:
 
 ```text
 Handläggare/
@@ -260,34 +134,23 @@ Handläggare/
   Installningar.json
 ```
 
-IT hanterar signering, tillåtna skript och uppdateringar enligt ordinarie rutin. Användaren dubbelklickar på **Starta.cmd**. Testa även att den kopierade mappen fungerar utan projektets övriga mappar.
-
-**Färdigt när:** en tilldelad handläggare kan logga in och söka från den distribuerade mappen, ett otilldelat konto nekas och exporterna är verifierade.
+IT fyller i inställningarna och hanterar signering/uppdateringar enligt ordinarie rutin. Handläggaren dubbelklickar på **Starta.cmd**. Inga andra projektfiler eller installerade moduler behövs. Provkör den kopierade mappen fristående från projektet före bred distribution.
 
 ## Felsökning
 
-| Symtom | Kontroll/åtgärd |
+| Symtom | Kontroll |
 | --- | --- |
-| `az` känns inte igen | Installera Azure CLI på IT:s dator och öppna ett nytt PowerShellfönster. |
-| Skriptet blockeras | Följ er signerings-/distributionspolicy. Kontrollera att rätt, granskad projektversion används. |
-| `Authorization_RequestDenied` eller 403 under Entra-installationen | Kontrollera rätt tenant, aktiv administrativ roll och administrationsklientens delegerade Graph-behörigheter. Att vara Contributor i Azure räcker inte. Lös inte detta genom att ge handläggarklienten administrativa Graph-rättigheter. |
-| Resursdistributionen nekas | Kontrollera Azure-RBAC, resursproviders, region, organisationspolicy och eventuella namnkonflikter i distributionens felrapport. |
-| Managed identity ger 404 vid tilldelning | En ny identitet kan behöva tid att synas i Graph. Kontrollera sparade objekt/resurser och återkör samma distribution efter propagation. |
-| Engångskodsinloggning blockeras | Kontrollera Entra sign-in logs, rätt klientapp och Conditional Access för device code. Anpassa inloggningsmetoden om policyn kräver det. |
-| Användaren nekas efter Microsoftinloggningen | Kontrollera TenantId, ClientId, ApiAppId och tilldelningen av `Trace.Reader` på API:ts Enterprise Application. Logga in igen efter behörighetsändring. |
-| Anonymkontrollen ger annat än 401 | Kontrollera Function Apps Authentication, att rätt endpoint används och att ingen proxy ändrar svaret. |
-| Session fungerar men sökning misslyckas | Kontrollera funktionens managed identity, Graph-appbehörigheten, Microsofts Message Trace-service principal och propagation. Använd felmeddelandets referens i loggarna. |
-| Inga träffar | Kontrollera rätt adress/alias, riktning, svenska datum, serverns tillåtna domäner och fördröjning i spårningen. |
-| Stor sökning eller throttling ger fel | Begränsa perioden och ange verksamhetsadress. Tjänsten har högst 10 000 träffar och en tidsbudget. |
-| Illegal character in path | Kontrollera JSON-sökvägen i `Handläggare/Installningar.json`. Använd exempelvis `C:/temp`. |
+| Klient-ID eller tenant-ID saknas | Fyll i GUID:erna från rätt appregistrering. |
+| Microsoft kräver en client secret | Kontrollera att appen tillåter public client flows. Denna klient ska inte använda secret. |
+| Engångskoden blockeras | Kontrollera public client-inställningen och Conditional Access/sign-in logs för device code. |
+| Samtycke krävs | Kontrollera delegerad ExchangeMessageTrace.Read.All och administratörsgodkännande för rätt tenant/app. |
+| Användaren är inte tilldelad | Tilldela användaren på Enterprise Application, inte bara som ägare till appregistreringen. |
+| Graph ger 401 | Logga in igen; kontrollera även Microsofts Message Trace-service principal och provisionering. |
+| Graph ger 403 | Kontrollera samtycke, rätt behörighetstyp, tilldelning och användarens faktiska API-åtkomst. Utred med ett vanligt testkonto. |
+| Inga träffar | Kontrollera adresser/alias, riktning, svensk tid, domänlista och spårningsfördröjning. |
+| Stor sökning eller throttling | Begränsa period eller verksamhetsadress och försök senare. Klienten avbryter utan delresultat. |
+| Illegal character in path | Använd exempelvis C:/temp i JSON-filen. |
 
-## Förvaltning efter installation
+## Om ni redan har provat Azure-versionen
 
-- **Fler handläggare:** Entra → Enterprise applications → API-applikationen → Users and groups → tilldela rollen *Transportlogg – handläggare*. Använd direkt tilldelning eller en godkänd grupp.
-- **Ta bort åtkomst:** ta bort rolltilldelningen/gruppmedlemskapet. Redan utfärdade token kan fortsätta vara giltiga tills de löper ut.
-- **Ändra domäner:** uppdatera `TL_ALLOWED_DOMAINS` i Function App settings som en JSON-lista eller återkör distributionen med en uppdaterad `AllowedDomains`. Behåll samma namn och sparade Entra-konfiguration. Ändra även er förvaltningsdokumentation så att nästa distribution använder rätt lista.
-- **Felsöka ett anrop:** använd referensen från felmeddelandet eller `TjanstReferens` i det interna exportunderlaget. Applikationsloggen innehåller användarens objekt-ID, status och radantal, inte sökadresser, ämnen eller token.
-- **Bevara konfigurationen:** förvara `.deployment/` och godkänd klientkonfiguration enligt IT:s rutiner. De genererade filerna är undantagna från Git.
-- **Uppdatera lösningen:** kör offline-testerna, bygg paketet och använd samma distributionskonfiguration. Verifiera efter uppdatering med vanligt handläggarkonto. Planera även uppdatering av Azure Functions PowerShell-runtime enligt Microsofts supportcykel.
-
-Ytterligare tekniska detaljer finns i [Azure-guiden](azure/README.md) och [arkitekturbeskrivningen](GRAPH-ARKITEKTUR.md).
+Denna version använder inte den gamla Function Appen, API-appregistreringen, managed identity eller Azure-prenumerationen. Inga molnresurser eller behörigheter raderas automatiskt. IT behöver bedöma eventuell avveckling separat enligt sin rutin. Tidigare kod finns i Git-historiken.

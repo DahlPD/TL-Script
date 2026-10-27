@@ -126,9 +126,10 @@ $connect.Add_Click({
         Set-Busy $true
         $status.Text = 'Öppnar Microsofts inloggning ...'; $form.Refresh()
         $script:authentication = Show-TransportSignIn -Settings $settings -Owner $form
-        $session = Invoke-TransportApi -Settings $settings -Authentication $script:authentication -Body @{ action = 'session' }
-        $script:domains = @($session.allowedDomains)
-        $script:connected = $true; $script:account = [string]$session.userName
+        $status.Text = 'Kontrollerar åtkomst till Microsoft Graph ...'; $status.Refresh()
+        Test-TransportGraphAccess -Authentication $script:authentication
+        $script:domains = @($settings.VerksamhetensDomaner)
+        $script:connected = $true; $script:account = $script:authentication.AccountLabel
         $connectionLabel.Text = "Inloggad: $script:account"
         $status.Text = 'Ange e-postadress och tidsperiod. Tryck sedan på Sök.'
     } catch {
@@ -169,19 +170,18 @@ $search.Add_Click({
                 }
             })
         } else {
-            $status.Text = 'Söker via verksamhetens tjänst och Microsoft Graph ...'; $status.Refresh()
-            $response = Invoke-TransportApi -Settings $settings -Authentication $script:authentication -Body @{
-                action = 'search'; address = $address.Text.Trim(); organizationAddress = $orgAddress.Text.Trim()
-                direction = $direction.Text; startUtc = $fromUtc.ToString('o'); endUtc = $toUtc.ToString('o')
-                includeSubject = [bool]$includeSubject.Checked
-            }
-            $script:results = @($response.rows)
+            $status.Text = 'Söker direkt i Microsoft Graph ...'; $status.Refresh()
+            $script:results = @(Invoke-GraphTransportSearch -Address $address.Text.Trim() -OrganizationAddress $orgAddress.Text.Trim() `
+                -AllowedDomains $script:domains -Direction $direction.Text -StartUtc $fromUtc -EndUtc $toUtc -MaximumRows 10000 `
+                -AccessTokenProvider { Get-TransportAccessToken $script:authentication } `
+                -Progress { param($Message) $status.Text = $Message; $status.Refresh() })
+            if (-not $includeSubject.Checked) { foreach ($item in $script:results) { $item.Amne = '' } }
         }
         $script:metadata = [ordered]@{
             Adress = $address.Text.Trim(); Verksamhetsadress = $orgAddress.Text.Trim()
             Riktning = $direction.Text; FranUTC = $fromUtc.ToString('o'); TillUTC = $toUtc.ToString('o')
             Tidszon = 'Europe/Stockholm'; Domaner = $script:domains
-            TjanstReferens = $(if ($Demo) { 'DEMO' } else { [string]$response.requestId })
+            Kalla = $(if ($Demo) { 'DEMO' } else { 'Microsoft Graph, delegerad användaråtkomst' })
             AntalSoktraffar = $script:results.Count; SokningAvslutadUTC = [datetime]::UtcNow.ToString('o')
             KontouppgiftVidInloggning = $script:account; Demo = [bool]$Demo
         }

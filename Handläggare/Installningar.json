@@ -1,7 +1,6 @@
 {
   "TenantId": "",
   "ClientId": "",
-  "ApiAppId": "",
-  "ApiBasUrl": "",
+  "VerksamhetensDomaner": [],
   "Exportmapp": "C:/temp"
 }
