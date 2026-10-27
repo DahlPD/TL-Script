@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Transportlogg.Core.ps1')
+. (Join-Path $PSScriptRoot 'Handläggare/Transportlogg.Core.ps1')
 $script:checks = 0
 function Assert($Condition, [string]$Message) {
     if (-not $Condition) { throw "TEST MISSLYCKADES: $Message" }

@@ -1,7 +1,9 @@
 ﻿#requires -Version 5.1
 # Module-free REST adapter. With application permissions this belongs on a trusted service,
 # not on the case worker's computer. It does not obtain or store application credentials.
-. (Join-Path $PSScriptRoot 'Transportlogg.Core.ps1')
+$coreFile = Join-Path $PSScriptRoot 'Transportlogg.Core.ps1'
+if (-not (Test-Path -LiteralPath $coreFile)) { $coreFile = Join-Path $PSScriptRoot 'Handläggare/Transportlogg.Core.ps1' }
+. $coreFile
 
 function Assert-TraceGraphUri {
     param([Parameter(Mandatory)][string]$Url)

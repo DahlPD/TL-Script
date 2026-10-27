@@ -1,5 +1,7 @@
 # IT-installation: Entra och Azure Function
 
+För installation från början, följ [den fullständiga steg-för-steg-guiden](../IT-KONFIGURATION-STEG-FOR-STEG.md). Den här filen är en kortare teknisk referens.
+
 **Detta är administrationssteg. Handläggarens dator ska inte installera Azure CLI eller några extra PowerShellmoduler.**
 
 Koden och Azure-mallen är förberedda och offline-testade. Ingen skarp tenantkonfiguration eller Azure-distribution har verifierats under utvecklingen.
@@ -62,7 +64,7 @@ Mallen kräver HTTPS och Easy Auth för alla anrop, rätt tenant-issuer, API-aud
 
 Graph-behörigheten ska bara ligga på funktionens managed identity, inte på handläggaren eller den publika klienten. Användarnas `Trace.Reader` avser enbart åtkomst till vårt API.
 
-Skriptet skapar **.deployment/erorganisation-transportlogg-Installningar.json** utan att skriva över projektets inställningar. Granska filen, välj eventuell godkänd exportmapp och kopiera den till klientens `Installningar.json` efter acceptanstest.
+Skriptet skapar **.deployment/erorganisation-transportlogg-Installningar.json** utan att skriva över projektets inställningar. Granska filen, välj eventuell godkänd exportmapp och kopiera den till `Handläggare/Installningar.json` efter acceptanstest.
 
 För att enbart bygga utan Azureanslutning:
 
@@ -81,7 +83,9 @@ powershell.exe -NoProfile -File .\Test-AzurePackage.ps1
 
 ## 4. Distribuera klienten
 
-Lägg följande filer i samma mapp hos handläggaren: `Starta.cmd`, `Starta-demo.cmd`, `Start-Transportlogg.ps1`, `Transportlogg.Client.ps1`, `Transportlogg.Core.ps1` och den färdiga `Installningar.json`.
+Distribuera hela mappen **Handläggare** efter att IT fyllt i `Handläggare/Installningar.json`. Mappen innehåller exakt fem filer: `Starta.cmd`, `Start-Transportlogg.ps1`, `Transportlogg.Client.ps1`, `Transportlogg.Core.ps1` och `Installningar.json`. Den ska fungera utan övriga projektmappar. Handläggaren öppnar `Starta.cmd`.
+
+`Starta-demo.cmd` ligger kvar i projektroten för IT:s tester och pekar på samma program i Handläggare-mappen. Den behöver inte distribueras.
 
 `azure/` och Graph-adaptern behövs bara för server/administration. Följ ordinarie signerings- och distributionsrutin. Windows PowerShell 5.1, WinForms och HTTPS måste vara tillåtna. Verktyget ändrar inte klientens säkerhetspolicy.
 

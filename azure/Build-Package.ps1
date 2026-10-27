@@ -9,8 +9,8 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ('TL-Function-build-' + [guid]::Ne
 [void](New-Item -ItemType Directory -Path $stage)
 try {
     Copy-Item -Path (Join-Path $PSScriptRoot 'function\*') -Destination $stage -Recurse -Force
-    foreach ($name in @('Transportlogg.Core.ps1','Transportlogg.Graph.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $stage 'shared')
+    foreach ($source in @('Handläggare/Transportlogg.Core.ps1','Transportlogg.Graph.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $root $source) -Destination (Join-Path $stage 'shared')
     }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = Join-Path $dist 'Transportlogg-Function.zip'

@@ -6,6 +6,35 @@ Ett svenskt Windowsverktyg för handläggare som behöver hitta e-postens transp
 
 Koden och distributionsskripten är förberedda. IT behöver konfigurera Entra och Azure enligt [installationsguiden](azure/README.md). Ingen faktisk tenantanslutning eller Azure-distribution har utförts under utvecklingen.
 
+**Börja här som IT:** [Steg-för-steg-guide för hela konfigurationen](IT-KONFIGURATION-STEG-FOR-STEG.md), med kommandon, förväntade resultat, acceptanstest och felsökning.
+
+## Vad ska handläggaren ha?
+
+Distribuera endast mappen **[Handläggare](Handläggare/)**. Den innehåller fem filer och fungerar fristående från resten av projektet:
+
+| Fil i Handläggare | Funktion |
+| --- | --- |
+| Starta.cmd | Startfilen som handläggaren dubbelklickar på. |
+| Start-Transportlogg.ps1 | Fönstret, träfflistan och arbetsflödet. |
+| Transportlogg.Client.ps1 | Microsoftinloggning och anrop till verksamhetens tjänst. |
+| Transportlogg.Core.ps1 | Gemensamma funktioner för datum, validering och rapportexport. |
+| Installningar.json | Tjänstens adress, app-ID:n och valfri exportmapp; fylls i av IT. |
+
+De andra filerna behövs för att bygga, driftsätta, testa och förvalta tjänsten som klienten använder:
+
+| Övrigt i projektet | Funktion |
+| --- | --- |
+| azure/function/ | Serverkoden som körs i Azure och kontrollerar behörighet. |
+| Transportlogg.Graph.ps1 | Serverns anrop till Microsoft Graph och hantering av resultatsidor. |
+| azure/main.bicep | Beskriver Azure-resurser och autentiseringsinställningar. |
+| azure/New-EntraApplications.ps1 | IT:s konfiguration av applikationer och användartilldelning. |
+| azure/Deploy-Azure.ps1 och Build-Package.ps1 | Bygger och distribuerar serverpaketet. |
+| Test-*.ps1 | Automatiska kontroller för utveckling och förvaltning. |
+| Starta-demo.cmd | Valfri demostart för IT, utanför handläggarmappen. |
+| README, arkitektur, azure/README och LICENSE | Instruktioner, teknisk beskrivning och licens. |
+
+De fem klientfilerna är alltså användarens del av lösningen. Azure-tjänsten måste också vara driftsatt, men dess filer ska inte ligga på handläggarens dator.
+
 ## Prova utan Microsoft 365-anslutning
 
 Dubbelklicka på **Starta-demo.cmd**, tryck på **Sök**, markera rader och välj **Exportera valda träffar**. Inga konfigurerade app-ID:n behövs i demoläget. Exporterna märks som fiktiva.
@@ -26,13 +55,13 @@ Se [Azure-installation](azure/README.md) och [arkitektur](GRAPH-ARKITEKTUR.md). 
 }
 ```
 
-Distributionsskriptet genererar en komplett inställningsfil i `.deployment/` utan att skriva över den lokala filen. Lägg inga klienthemligheter, certifikat eller funktionsnycklar i klienten. Tillåtna verksamhetsdomäner bestäms på servern.
+Distributionsskriptet genererar en komplett inställningsfil i `.deployment/` utan att skriva över den lokala filen. IT kopierar de färdiga inställningarna till `Handläggare/Installningar.json` innan mappen distribueras. Lägg inga klienthemligheter, certifikat eller funktionsnycklar i klienten. Tillåtna verksamhetsdomäner bestäms på servern.
 
 Exportmappen är ett förvalt alternativ, ingen åtkomstspärr. Använd `/` i JSON-sökvägar eller dubbla bakstreck: `C:/temp` respektive `C:\\temp`. Ett ensamt bakstreck i `C:\temp` gör `\t` till en tabulator. Tom exportmapp låter användaren välja plats själv.
 
 ## Handläggarens arbetsgång
 
-1. Öppna **Starta.cmd** och tryck på **Logga in**.
+1. Öppna **Handläggare/Starta.cmd** och tryck på **Logga in**.
 2. Tryck på **Öppna inloggning**, ange engångskoden på Microsofts sida och logga in med arbetskontot. Följ organisationens MFA-anvisningar och återvänd till verktyget.
 3. Ange den exakta adress som begäran gäller, normalt invånarens adress. Ange vid behov även verksamhetens exakta adress.
 4. Välj period och riktning. **Till verksamheten** söker adressen som avsändare; **Från verksamheten** söker den som mottagare. **Båda** gör båda sökningarna.

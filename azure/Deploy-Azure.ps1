@@ -9,7 +9,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-. (Join-Path $root 'Transportlogg.Core.ps1')
+. (Join-Path $root 'Handläggare/Transportlogg.Core.ps1')
 foreach ($domain in $AllowedDomains) { Assert-TraceAddress "kontroll@$domain" }
 if ($AllowedDomains.Count -eq 0) { throw 'Ange minst en verksamhetsdomän.' }
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) { throw 'Azure CLI behövs på IT:s administrationsdator.' }
@@ -53,4 +53,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Uppladdningen av funktionskoden misslyckades.'
 $clientSettings = @{ TenantId = $config.TenantId; ClientId = $config.ClientId; ApiAppId = $config.ApiAppId; ApiBasUrl = $outputs.apiBaseUrl.value; Exportmapp = '' }
 $settingsPath = Join-Path $root ".deployment/$FunctionName-Installningar.json"
 [IO.File]::WriteAllText($settingsPath,($clientSettings | ConvertTo-Json),[Text.UTF8Encoding]::new($true))
-Write-Output "Distribution klar. Klientinställningar: $settingsPath. Kopiera dem till handläggarnas Installningar.json efter acceptanstest."
+Write-Output "Distribution klar. Klientinställningar: $settingsPath. Kopiera dem till Handläggare/Installningar.json efter acceptanstest och distribuera hela mappen Handläggare."
